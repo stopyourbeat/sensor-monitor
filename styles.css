@@ -566,6 +566,84 @@ input[type="month"]::-webkit-calendar-picker-indicator {
     width: 100%;
 }
 
+/* Monitoring View - Light Surface */
+#view-monitoring {
+    background: #ffffff;
+    border-radius: 16px;
+    padding: 1rem;
+}
+
+#view-monitoring .glass-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+}
+
+#view-monitoring .card-header {
+    border-bottom: 1px solid #e2e8f0;
+}
+
+#view-monitoring .card-header h2,
+#view-monitoring .card-header i,
+#view-monitoring .row-left,
+#view-monitoring .row-right {
+    color: #0f172a;
+}
+
+#view-monitoring .form-group label {
+    color: #475569;
+}
+
+#view-monitoring input,
+#view-monitoring select {
+    background: #ffffff;
+    color: #0f172a;
+    border: 1px solid #cbd5e1;
+}
+
+#view-monitoring select option {
+    background: #ffffff;
+    color: #0f172a;
+}
+
+#view-monitoring input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+#view-monitoring input[type="month"]::-webkit-calendar-picker-indicator {
+    filter: none;
+    opacity: 0.8;
+}
+
+#view-monitoring .data-table th {
+    background: #f8fafc;
+    color: #334155;
+}
+
+#view-monitoring .data-table td {
+    color: #0f172a;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+#view-monitoring .data-table tbody tr:hover {
+    background: #f8fafc;
+}
+
+#view-monitoring .table-action-btn {
+    color: #64748b;
+}
+
+#view-monitoring .table-wrapper::-webkit-scrollbar-track {
+    background: #f1f5f9;
+}
+
+#view-monitoring .table-wrapper::-webkit-scrollbar-thumb {
+    background: #cbd5e1;
+}
+
+#view-monitoring .table-wrapper::-webkit-scrollbar-thumb:hover {
+    background: #94a3b8;
+}
+
 .toast i {
     color: var(--status-success);
 }

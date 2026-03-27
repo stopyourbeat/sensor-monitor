@@ -71,6 +71,8 @@ document.addEventListener('DOMContentLoaded', () => {
         temp: { min: 18, max: 23 },
         hum: { min: 40, max: 60 }
     };
+    const SYNC_QUEUE_KEY = 'specMon_syncQueue';
+    const SYNC_INTERVAL_MS = 20000;
 
     function normalizeSpecs(rawSpecs) {
         const tempMin = Number(rawSpecs?.temp?.min);
@@ -136,6 +138,16 @@ document.addEventListener('DOMContentLoaded', () => {
         };
     }
 
+    function createStableRowId(parts, fallbackPrefix = 'row') {
+        const raw = parts.join('|');
+        let hash = 0;
+        for (let i = 0; i < raw.length; i++) {
+            hash = ((hash << 5) - hash) + raw.charCodeAt(i);
+            hash |= 0;
+        }
+        return `${fallbackPrefix}_${Math.abs(hash)}`;
+    }
+
     /*
     function normalizeFetchedRow(row, index) {
         const raw = row && typeof row === 'object' ? row : {};
@@ -185,8 +197,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const specHumMin = Number.isFinite(humSpecMinCandidate) ? humSpecMinCandidate : humRangeFromText.min;
         const specHumMax = Number.isFinite(humSpecMaxCandidate) ? humSpecMaxCandidate : humRangeFromText.max;
 
+        const rawId = sanitizeText(getFirstValue(raw, ['id']), '');
+        const stableId = rawId !== ''
+            ? rawId
+            : createStableRowId(
+                [datetime, subsidiaryName, factoryName, processName, author, String(temp), String(hum)],
+                'sheet'
+            );
+
         return {
-            id: sanitizeText(getFirstValue(raw, ['id']), `sheet_${index}_${Date.now()}`),
+            id: stableId,
             datetime,
             subsidiaryName,
             factoryName,
@@ -198,7 +218,8 @@ document.addEventListener('DOMContentLoaded', () => {
             specTempMin,
             specTempMax,
             specHumMin,
-            specHumMax
+            specHumMax,
+            _syncState: sanitizeText(getFirstValue(raw, ['_syncState', 'syncState']), 'synced')
         };
     }
 
@@ -301,6 +322,15 @@ document.addEventListener('DOMContentLoaded', () => {
         savedProcessData = [];
     }
     let processData = normalizeFetchedData(savedProcessData);
+    let savedSyncQueue = [];
+    try {
+        savedSyncQueue = JSON.parse(localStorage.getItem(SYNC_QUEUE_KEY)) || [];
+    } catch (e) {
+        savedSyncQueue = [];
+    }
+    let syncQueue = Array.isArray(savedSyncQueue) ? savedSyncQueue : [];
+    let syncInProgress = false;
+    let syncIntervalId = null;
     let processList = JSON.parse(localStorage.getItem('specMon_processes')) || ['SMT-Line-1', 'SMT-Line-2', 'Assembly-A'];
     let authorList = JSON.parse(localStorage.getItem('specMon_authors')) || ['관리자', '홍길동'];
     let subsidiaryList = JSON.parse(localStorage.getItem('specMon_subsidiaries')) || ['법인-A', '법인-B'];
@@ -317,7 +347,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function generateId() {
-        return Math.random().toString(36).substr(2, 9);
+        return `r_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
     }
 
     // 햅틱 진동 피드백 (Smartphone Haptic)
@@ -343,7 +373,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 const result = normalizeFetchedData(rows);
                 if (Array.isArray(result) && result.length > 0) {
                     processData = result;
-                    localStorage.setItem('specMon_data', JSON.stringify(processData));
+                    syncQueue = [];
+                    persistProcessData();
+                    persistSyncQueue();
                     updateUI();
                     showToast('서버 데이터 동기화 완료! (Data Sync Complete)');
                 }
@@ -352,6 +384,200 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         } catch (e) {
             console.error('Fetch error:', e);
+        }
+    }
+
+    function persistProcessData() {
+        localStorage.setItem('specMon_data', JSON.stringify(processData));
+    }
+
+    function persistSyncQueue() {
+        localStorage.setItem(SYNC_QUEUE_KEY, JSON.stringify(syncQueue));
+    }
+
+    function buildSheetPayload(action, record) {
+        return {
+            action,
+            id: record.id,
+            date: record.datetime,
+            subsidiaryName: record.subsidiaryName,
+            factoryName: record.factoryName,
+            processName: record.processName,
+            author: record.authorRaw || record.author || '-',
+            temp: record.temp,
+            hum: record.hum,
+            status: record.status,
+            tempSpec: `${record.specTempMin}~${record.specTempMax}`,
+            humSpec: `${record.specHumMin}~${record.specHumMax}`
+        };
+    }
+
+    function enqueueSync(action, record) {
+        const exists = syncQueue.some(op => op.action === action && op.id === record.id);
+        if (exists) return;
+        syncQueue.push({
+            action,
+            id: record.id,
+            payload: buildSheetPayload(action, record),
+            retries: 0,
+            createdAt: Date.now(),
+            lastError: ''
+        });
+        persistSyncQueue();
+    }
+
+    async function postToGoogleSheets(payload) {
+        const response = await fetch(GOOGLE_SHEETS_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const rawText = await response.text();
+        if (!rawText) return true;
+
+        let parsed = null;
+        try {
+            parsed = JSON.parse(rawText);
+        } catch (e) {
+            return true;
+        }
+
+        if (parsed && parsed.success === false) {
+            throw new Error(parsed.message || 'Server rejected request');
+        }
+
+        return true;
+    }
+
+    async function flushSyncQueue({ silent = true } = {}) {
+        if (!GOOGLE_SHEETS_URL || syncInProgress || syncQueue.length === 0) return;
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+
+        syncInProgress = true;
+        let syncedCount = 0;
+
+        try {
+            while (syncQueue.length > 0) {
+                const op = syncQueue[0];
+                try {
+                    await postToGoogleSheets(op.payload);
+                    syncQueue.shift();
+                    syncedCount += 1;
+
+                    if (op.action === 'insert') {
+                        const idx = processData.findIndex(item => item.id === op.id);
+                        if (idx >= 0) processData[idx]._syncState = 'synced';
+                    }
+                    persistSyncQueue();
+                    persistProcessData();
+                } catch (error) {
+                    op.retries = (op.retries || 0) + 1;
+                    op.lastError = error && error.message ? error.message : 'unknown';
+                    persistSyncQueue();
+
+                    const idx = processData.findIndex(item => item.id === op.id);
+                    if (idx >= 0 && op.action === 'insert') {
+                        processData[idx]._syncState = 'failed';
+                        persistProcessData();
+                    }
+                    if (!silent) showToast(`동기화 대기 중 (${syncQueue.length}건)`);
+                    break;
+                }
+            }
+            if (syncedCount > 0 && !silent) showToast(`동기화 완료 (${syncedCount}건)`);
+        } finally {
+            syncInProgress = false;
+        }
+    }
+
+    function mergeServerData(serverRows) {
+        const pendingDeleteIds = new Set(
+            syncQueue.filter(op => op.action === 'delete').map(op => op.id)
+        );
+        const localById = new Map(processData.map(item => [item.id, item]));
+        const seen = new Set();
+        const merged = [];
+
+        serverRows.forEach(row => {
+            if (!row.id || pendingDeleteIds.has(row.id)) return;
+            seen.add(row.id);
+            const local = localById.get(row.id);
+            merged.push({
+                ...(local || {}),
+                ...row,
+                _syncState: 'synced'
+            });
+        });
+
+        processData.forEach(local => {
+            if (!local.id || seen.has(local.id)) return;
+            if (local._syncState === 'pending' || local._syncState === 'failed') merged.push(local);
+        });
+
+        processData = merged;
+        persistProcessData();
+    }
+
+    async function fetchServerData({ silent = false } = {}) {
+        if (!GOOGLE_SHEETS_URL) return;
+        if (!silent) showToast('서버 데이터 동기화 중... (Syncing...)');
+
+        try {
+            const response = await fetch(GOOGLE_SHEETS_URL, { cache: 'no-store' });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+            const textResponse = await response.text();
+            let parsed = [];
+            try {
+                parsed = JSON.parse(textResponse);
+            } catch (e) {
+                parsed = [];
+            }
+
+            const rows = Array.isArray(parsed)
+                ? parsed
+                : (Array.isArray(parsed?.data) ? parsed.data : (Array.isArray(parsed?.rows) ? parsed.rows : []));
+            const normalized = normalizeFetchedData(rows);
+            if (!Array.isArray(normalized) || normalized.length === 0) {
+                if (!silent) showToast('서버 응답 데이터가 없습니다.');
+                return;
+            }
+            mergeServerData(normalized);
+            updateUI();
+            if (!silent) showToast('서버 데이터 동기화 완료!');
+        } catch (e) {
+            console.error('Fetch error:', e);
+            if (!silent) showToast('서버 데이터 조회 실패');
+        }
+    }
+
+    async function runSync({ silent = true } = {}) {
+        await flushSyncQueue({ silent: true });
+        await fetchServerData({ silent });
+        await flushSyncQueue({ silent: true });
+        if (!silent) updateUI();
+    }
+
+    function startAutoSync() {
+        if (syncIntervalId) clearInterval(syncIntervalId);
+        syncIntervalId = setInterval(() => {
+            runSync({ silent: true });
+        }, SYNC_INTERVAL_MS);
+
+        window.addEventListener('online', () => {
+            runSync({ silent: true });
+        });
+    }
+
+    function stopAutoSync() {
+        if (syncIntervalId) {
+            clearInterval(syncIntervalId);
+            syncIntervalId = null;
         }
     }
 
@@ -408,7 +634,8 @@ document.addEventListener('DOMContentLoaded', () => {
         updateUI();
 
         // Auto-sync with server on load
-        fetchServerData();
+        startAutoSync();
+        runSync({ silent: true });
     }
 
     // 5. Events Binding
@@ -714,131 +941,63 @@ document.addEventListener('DOMContentLoaded', () => {
                     specTempMin,
                     specTempMax,
                     specHumMin,
-                    specHumMax
+                    specHumMax,
+                    _syncState: GOOGLE_SHEETS_URL ? 'pending' : 'local'
                 };
 
                 processData.push(newData);
-                localStorage.setItem('specMon_data', JSON.stringify(processData));
+                persistProcessData();
                 localStorage.setItem('specMon_author', authorRaw); // Remember last author
 
-                // Supabase 서버로 전송 전용 데이터 구성
-                if (supabase) {
-                    showToast('데이터를 Supabase 서버로 전송 중입니다...');
+                if (GOOGLE_SHEETS_URL) {
+                    enqueueSync('insert', newData);
+                    flushSyncQueue({ silent: false });
+                } else {
+                    showToast('로컬 기기에 저장되었습니다.');
+                }
 
-                    const dbPayload = {
-                        datetime: newData.datetime,
-                        subsidiary: newData.subsidiaryName,
-                        factory: newData.factoryName,
-                        process: newData.processName,
+                measureTempInput.value = '';
+                measureHumInput.value = '';
+                updateUI();
+                return;
+
+                // 2. 구글 시트로 전송 로직 (호환성 보강)
+                if (GOOGLE_SHEETS_URL) {
+                    showToast('데이터 전송 중...');
+                    const sheetPayload = {
+                        action: 'insert',
+                        date: newData.datetime,
+                        subsidiaryName: newData.subsidiaryName,
+                        factoryName: newData.factoryName,
+                        processName: newData.processName,
                         author: newData.authorRaw,
                         temp: newData.temp,
                         hum: newData.hum,
                         status: newData.status,
-                        temp_spec_Min: newData.specTempMin,
-                        temp_spec_Max: newData.specTempMax,
-                        humid_spec_Min: newData.specHumMin,
-                        humid_spec_Max: newData.specHumMax,
-                        temp_spec_min: newData.specTempMin,
-                        temp_spec_max: newData.specTempMax,
-                        hum_spec_min: newData.specHumMin,
-                        hum_spec_max: newData.specHumMax,
-                        humid_spec_min: newData.specHumMin,
-                        humid_spec_max: newData.specHumMax,
-                        Temp_spec_min: newData.specTempMin,
-                        Temp_spec_max: newData.specTempMax,
-                        Humid_spec_min: newData.specHumMin,
-                        Humid_spec_max: newData.specHumMax,
-                        specTemp: safeTempSpecText,
-                        specHum: safeHumSpecText,
-                        tempSpec: safeTempSpecText,
-                        humidSpec: safeHumSpecText,
-                        humSpec: safeHumSpecText,
-                        temp_spec: safeTempSpecText,
-                        humid_spec: safeHumSpecText,
-                        hum_spec: safeHumSpecText,
-                        Temp_spec: safeTempSpecText,
-                        Temp_Spec: safeTempSpecText,
-                        Humid_spec: safeHumSpecText,
-                        Humid_Spec: safeHumSpecText,
-                        Hum_spec: safeHumSpecText,
-                        TempSpec: safeTempSpecText,
-                        HumidSpec: safeHumSpecText,
-                        Temp_spec_text: safeTempSpecText,
-                        Humid_spec_text: safeHumSpecText
+                        tempSpec: `${newData.specTempMin}~${newData.specTempMax}`,
+                        humSpec: `${newData.specHumMin}~${newData.specHumMax}`
                     };
-
-                    payload.row = JSON.stringify({
-                        date: payload.date,
-                        ['Subsidiary Name']: payload['Subsidiary Name'],
-                        ['Factory Name']: payload['Factory Name'],
-                        Company: payload.Company,
-                        Factory: payload.Factory,
-                        author: payload.author,
-                        processName: payload.processName,
-                        Temp: payload.Temp,
-                        Temp_spec: payload.Temp_spec,
-                        hum: payload.hum,
-                        Humid_spec: payload.Humid_spec,
-                        Status: payload.Status,
-                        subsidiaryName: payload.subsidiaryName,
-                        factoryName: payload.factoryName,
-                        managerName: payload.managerName
-                    });
-                    payload.rowValues = JSON.stringify([
-                        payload.date,
-                        payload['Subsidiary Name'],
-                        payload['Factory Name'],
-                        payload.author,
-                        payload.processName,
-                        payload.Temp,
-                        payload.Temp_spec,
-                        payload.hum,
-                        payload.Humid_spec,
-                        payload.Status
-                    ]);
-
-                    const normalizedPayload = {};
-                    Object.entries(payload).forEach(([key, value]) => {
-                        if (value === undefined || value === null) {
-                            normalizedPayload[key] = '';
-                            return;
-                        }
-                        if (typeof value === 'number' && !Number.isFinite(value)) {
-                            normalizedPayload[key] = '';
-                            return;
-                        }
-                        normalizedPayload[key] = value;
-                    });
-
-                    const requestParams = new URLSearchParams();
-                    requestParams.append('data', JSON.stringify(normalizedPayload));
-                    Object.entries(normalizedPayload).forEach(([key, value]) => {
-                        requestParams.append(key, String(value));
-                    });
-
-                    console.log('[GoogleSheets Payload]', normalizedPayload);
 
                     fetch(GOOGLE_SHEETS_URL, {
                         method: 'POST',
-                        mode: 'no-cors', // CORS 정책 우회 (보통 GAS 응답을 못 읽어도 전송은 성공함)
-                        headers: {
-                            'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
-                        },
-                        body: requestParams.toString()
+                        mode: 'no-cors',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(sheetPayload)
                     }).then(() => {
-                        showToast('성공적으로 저장 및 전송되었습니다.');
+                        showToast('구글 시트 저장 완료!');
+                        updateUI();
                     }).catch(error => {
-                        console.error('Error sending to Google API:', error);
-                        showToast('로컬 저장 완료 (구글 시트 전송은 실패)');
+                        console.error('Sheet Sync Error:', error);
+                        showToast('로컬 저장 완료 (전송 실패)');
                     });
                 } else {
-                    showToast('로컬에 저장되었습니다. (구글 시트 미연결)');
+                    showToast('로컬 기기에 저장되었습니다.');
+                    updateUI();
                 }
 
-                // Reset Measurement Inputs only
+                // 입력 필드 초기화
                 measureTempInput.value = '';
                 measureHumInput.value = '';
-
                 updateUI();
             });
         }
@@ -859,7 +1018,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Table List Action Events
         if (refreshDataBtn) {
-            refreshDataBtn.addEventListener('click', fetchGoogleSheetsData);
+            refreshDataBtn.addEventListener('click', () => runSync({ silent: false }));
         }
 
         if (clearDataBtn) {
@@ -867,7 +1026,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (processData.length === 0) return;
                 if (confirm('모든 데이터를 초기화하시겠습니까? 복구할 수 없습니다. (Clear all data? Cannot be undone.)')) {
                     processData = [];
-                    localStorage.setItem('specMon_data', JSON.stringify(processData));
+                    syncQueue = [];
+                    persistProcessData();
+                    persistSyncQueue();
                     updateUI();
                     showToast('초기화 완료되었습니다. (Data cleared)');
                 }
@@ -1033,9 +1194,15 @@ document.addEventListener('DOMContentLoaded', () => {
     window.deleteData = async function (id) {
         if (confirm('이 항목을 삭제하시겠습니까? (Delete this record?)')) {
             // Local deletion first
+            const deletedRow = processData.find(d => d.id === id);
             processData = processData.filter(d => d.id !== id);
-            localStorage.setItem('specMon_data', JSON.stringify(processData));
+            persistProcessData();
             updateUI();
+            if (GOOGLE_SHEETS_URL && deletedRow) {
+                enqueueSync('delete', deletedRow);
+                flushSyncQueue({ silent: false });
+                return;
+            }
 
             // Note: True server deletion from Google Sheets requires more logic in Apps Script + POST with action='delete'.
             // For now, this only permanently deletes it from local device / UI until next sync.
@@ -1508,5 +1675,9 @@ document.addEventListener('DOMContentLoaded', () => {
         if (target) {
             vibrate(12);
         }
+    });
+
+    window.addEventListener('beforeunload', () => {
+        stopAutoSync();
     });
 });
