@@ -455,16 +455,25 @@ document.addEventListener('DOMContentLoaded', () => {
             return true;
         } catch (corsOrNetworkError) {
             // Fallback for environments where Apps Script CORS blocks readable responses.
-            const formBody = new URLSearchParams();
-            Object.entries(payload).forEach(([key, value]) => {
-                formBody.append(key, value === undefined || value === null ? '' : String(value));
-            });
-            await fetch(GOOGLE_SHEETS_URL, {
-                method: 'POST',
-                mode: 'no-cors',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-                body: formBody.toString()
-            });
+            try {
+                await fetch(GOOGLE_SHEETS_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify(payload)
+                });
+            } catch (fallbackError) {
+                const formBody = new URLSearchParams();
+                Object.entries(payload).forEach(([key, value]) => {
+                    formBody.append(key, value === undefined || value === null ? '' : String(value));
+                });
+                await fetch(GOOGLE_SHEETS_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                    body: formBody.toString()
+                });
+            }
             return true;
         }
     }
@@ -975,45 +984,47 @@ document.addEventListener('DOMContentLoaded', () => {
                 measureHumInput.value = '';
                 updateUI();
                 return;
+                if (false) {
 
-                // 2. 구글 시트로 전송 로직 (호환성 보강)
-                if (GOOGLE_SHEETS_URL) {
-                    showToast('데이터 전송 중...');
-                    const sheetPayload = {
-                        action: 'insert',
-                        date: newData.datetime,
-                        subsidiaryName: newData.subsidiaryName,
-                        factoryName: newData.factoryName,
-                        processName: newData.processName,
-                        author: newData.authorRaw,
-                        temp: newData.temp,
-                        hum: newData.hum,
-                        status: newData.status,
-                        tempSpec: `${newData.specTempMin}~${newData.specTempMax}`,
-                        humSpec: `${newData.specHumMin}~${newData.specHumMax}`
-                    };
+                    // 2. 구글 시트로 전송 로직 (호환성 보강)
+                    if (GOOGLE_SHEETS_URL) {
+                        showToast('데이터 전송 중...');
+                        const sheetPayload = {
+                            action: 'insert',
+                            date: newData.datetime,
+                            subsidiaryName: newData.subsidiaryName,
+                            factoryName: newData.factoryName,
+                            processName: newData.processName,
+                            author: newData.authorRaw,
+                            temp: newData.temp,
+                            hum: newData.hum,
+                            status: newData.status,
+                            tempSpec: `${newData.specTempMin}~${newData.specTempMax}`,
+                            humSpec: `${newData.specHumMin}~${newData.specHumMax}`
+                        };
 
-                    fetch(GOOGLE_SHEETS_URL, {
-                        method: 'POST',
-                        mode: 'no-cors',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(sheetPayload)
-                    }).then(() => {
-                        showToast('구글 시트 저장 완료!');
+                        fetch(GOOGLE_SHEETS_URL, {
+                            method: 'POST',
+                            mode: 'no-cors',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(sheetPayload)
+                        }).then(() => {
+                            showToast('구글 시트 저장 완료!');
+                            updateUI();
+                        }).catch(error => {
+                            console.error('Sheet Sync Error:', error);
+                            showToast('로컬 저장 완료 (전송 실패)');
+                        });
+                    } else {
+                        showToast('로컬 기기에 저장되었습니다.');
                         updateUI();
-                    }).catch(error => {
-                        console.error('Sheet Sync Error:', error);
-                        showToast('로컬 저장 완료 (전송 실패)');
-                    });
-                } else {
-                    showToast('로컬 기기에 저장되었습니다.');
+                    }
+
+                    // 입력 필드 초기화
+                    measureTempInput.value = '';
+                    measureHumInput.value = '';
                     updateUI();
                 }
-
-                // 입력 필드 초기화
-                measureTempInput.value = '';
-                measureHumInput.value = '';
-                updateUI();
             });
         }
 
@@ -1620,6 +1631,89 @@ document.addEventListener('DOMContentLoaded', () => {
     function updateUI() {
         renderTable();
         renderChart();
+    }
+
+    // Re-declare sync functions to ensure stable behavior after legacy merges.
+    async function flushSyncQueue({ silent = true } = {}) {
+        if (!GOOGLE_SHEETS_URL || syncInProgress || syncQueue.length === 0) return;
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+
+        syncInProgress = true;
+        let syncedCount = 0;
+
+        try {
+            while (syncQueue.length > 0) {
+                const op = syncQueue[0];
+                try {
+                    await postToGoogleSheets(op.payload);
+                    syncQueue.shift();
+                    syncedCount += 1;
+
+                    if (op.action === 'insert') {
+                        const idx = processData.findIndex(item => item.id === op.id);
+                        if (idx >= 0) processData[idx]._syncState = 'synced';
+                    }
+                    persistSyncQueue();
+                    persistProcessData();
+                } catch (error) {
+                    op.retries = (op.retries || 0) + 1;
+                    op.lastError = error && error.message ? error.message : 'unknown';
+                    persistSyncQueue();
+
+                    const idx = processData.findIndex(item => item.id === op.id);
+                    if (idx >= 0 && op.action === 'insert') {
+                        processData[idx]._syncState = 'failed';
+                        persistProcessData();
+                    }
+                    if (!silent) showToast(`동기화 대기 중 (${syncQueue.length}건)`);
+                    break;
+                }
+            }
+            if (syncedCount > 0 && !silent) showToast(`동기화 완료 (${syncedCount}건)`);
+        } finally {
+            syncInProgress = false;
+        }
+    }
+
+    async function fetchServerData({ silent = false } = {}) {
+        if (!GOOGLE_SHEETS_URL) return;
+        if (!silent) showToast('서버 데이터 동기화 중...');
+
+        try {
+            const response = await fetch(GOOGLE_SHEETS_URL, { cache: 'no-store' });
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+            const textResponse = await response.text();
+            let parsed = [];
+            try {
+                parsed = JSON.parse(textResponse);
+            } catch (e) {
+                parsed = [];
+            }
+
+            const rows = Array.isArray(parsed)
+                ? parsed
+                : (Array.isArray(parsed?.data) ? parsed.data : (Array.isArray(parsed?.rows) ? parsed.rows : []));
+            const normalized = normalizeFetchedData(rows);
+            if (!Array.isArray(normalized) || normalized.length === 0) {
+                if (!silent) showToast('서버 응답 데이터가 없습니다.');
+                return;
+            }
+
+            mergeServerData(normalized);
+            updateUI();
+            if (!silent) showToast('서버 데이터 동기화 완료');
+        } catch (e) {
+            console.error('Fetch error:', e);
+            if (!silent) showToast('서버 데이터 조회 실패');
+        }
+    }
+
+    async function runSync({ silent = true } = {}) {
+        await flushSyncQueue({ silent: true });
+        await fetchServerData({ silent });
+        await flushSyncQueue({ silent: true });
+        if (!silent) updateUI();
     }
 
     function showToast(msg) {
