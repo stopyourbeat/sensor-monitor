@@ -1,0 +1,6 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="512" height="512" fill="#0F172A"/>
+  <rect x="80" y="160" width="50" height="90" fill="#2167B5"/>
+  <rect x="80" y="260" width="50" height="90" fill="#3B9B4A"/>
+  <text x="160" y="320" fill="white" font-family="Pretendard, Arial, sans-serif" font-weight="900" font-size="120">Hansol</text>
+</svg>
