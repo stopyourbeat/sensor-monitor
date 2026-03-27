@@ -1,4 +1,4 @@
-const CACHE_NAME = 'spec-mon-v11';
+const CACHE_NAME = 'spec-mon-v12';
 const urlsToCache = [
     './index.html',
     './styles.css',

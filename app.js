@@ -369,7 +369,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const rows = Array.isArray(parsed)
                     ? parsed
                     : (Array.isArray(parsed?.data) ? parsed.data : (Array.isArray(parsed?.rows) ? parsed.rows : []));
-                
+
                 const result = normalizeFetchedData(rows);
                 if (Array.isArray(result) && result.length > 0) {
                     processData = result;
@@ -427,31 +427,46 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     async function postToGoogleSheets(payload) {
-        const response = await fetch(GOOGLE_SHEETS_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
-
-        if (!response.ok) {
-            throw new Error(`HTTP ${response.status}`);
-        }
-
-        const rawText = await response.text();
-        if (!rawText) return true;
-
-        let parsed = null;
         try {
-            parsed = JSON.parse(rawText);
-        } catch (e) {
+            const response = await fetch(GOOGLE_SHEETS_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+
+            const rawText = await response.text();
+            if (!rawText) return true;
+
+            let parsed = null;
+            try {
+                parsed = JSON.parse(rawText);
+            } catch (e) {
+                return true;
+            }
+
+            if (parsed && parsed.success === false) {
+                throw new Error(parsed.message || 'Server rejected request');
+            }
+
+            return true;
+        } catch (corsOrNetworkError) {
+            // Fallback for environments where Apps Script CORS blocks readable responses.
+            const formBody = new URLSearchParams();
+            Object.entries(payload).forEach(([key, value]) => {
+                formBody.append(key, value === undefined || value === null ? '' : String(value));
+            });
+            await fetch(GOOGLE_SHEETS_URL, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                body: formBody.toString()
+            });
             return true;
         }
-
-        if (parsed && parsed.success === false) {
-            throw new Error(parsed.message || 'Server rejected request');
-        }
-
-        return true;
     }
 
     async function flushSyncQueue({ silent = true } = {}) {
