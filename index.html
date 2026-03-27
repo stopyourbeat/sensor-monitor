@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#0f172a">
+    <link rel="manifest" href="manifest.json">
+    <link rel="apple-touch-icon" href="https://cdn.jsdelivr.net/npm/lucide-static@0.320.0/icons/activity.svg">
+    <title>공정 온습도 모니터링 앱</title>
+    <!-- Modern Typography -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Pretendard:wght@300;400;500;600;700&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+    <!-- Chart.js and Annotation Plugin -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script
+        src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@2.1.0/dist/chartjs-plugin-annotation.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <!-- Flatpickr (English Calendar) -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <link rel="stylesheet" href="https://npmcdn.com/flatpickr/dist/themes/dark.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <!-- Tesseract.js for OCR -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+</head>
+
+<body>
+    <!-- Authentication Overlay -->
+    <div id="auth-screen" style="display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 1rem;">
+        <div class="glass-card fade-in" style="width: 100%; max-width: 400px; padding: 2rem; text-align: center;">
+            <div class="hansol-logo" style="justify-content: center; margin-bottom: 0.5rem;">
+                <div class="logo-squares" style="width: 14px; gap: 3px;">
+                    <div class="sq-blue" style="height: 14px;"></div>
+                    <div class="sq-green" style="height: 14px;"></div>
+                </div>
+                <div class="company-logo-text" style="font-size: 2.5rem; justify-content: center;">Hansol</div>
+            </div>
+            <h2 style="color: white; margin-bottom: 0.5rem;">공정 스펙 모니터링 앱</h2>
+            <p style="color: #94a3b8; font-size: 0.9rem; margin-bottom: 2rem;">Authorized Personnel Only</p>
+            
+            <form id="auth-form" style="display: flex; flex-direction: column; gap: 0.25rem;">
+                <div class="form-group">
+                    <input type="password" id="auth-code" autocomplete="off" placeholder="Enter Access Code" required style="text-align: center; font-size: 1.1rem; padding: 1rem; border-radius: 12px; margin-bottom: 1rem;">
+                </div>
+                <button type="submit" class="btn btn-primary w-full" style="padding: 1rem; font-size: 1.1rem; border-radius: 12px;">접속하기 (Login)</button>
+                <p id="auth-error" style="color: #ef4444; font-size: 0.9rem; margin-top: 1rem; display: none;">잘못된 접속 코드입니다. (Invalid code)</p>
+            </form>
+        </div>
+    </div>
+
+    <div class="app-container" id="main-app-container" style="display: none;">
+        <!-- Sidebar Navigation (Optional, for aesthetics) -->
+        <aside class="sidebar">
+            <div class="logo">
+                <i data-lucide="activity" class="icon-logo"></i>
+                <span>SPEC MON</span>
+            </div>
+            <nav>
+                <a href="#" class="nav-item active" id="nav-dashboard"><i data-lucide="layout-dashboard"></i>
+                    <span>대시보드 (Dashboard)</span></a>
+                <a href="#" class="nav-item" id="nav-monitoring"><i data-lucide="line-chart"></i> <span>이력
+                        모니터링 (Monitoring)</span></a>
+                <a href="#" class="nav-item" id="nav-settings"><i data-lucide="settings"></i> <span>설정 (Settings)</span></a>
+            </nav>
+            <div class="sidebar-footer">
+                <p>v1.0.0</p>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="top-header">
+                <div class="header-titles">
+                    <h1 id="page-title">공정 환경 대시보드 (Environment Dashboard)</h1>
+                    <p id="page-subtitle">Temperature & Humidity Control Center</p>
+                </div>
+                <div class="header-actions">
+                    <button id="btn-install" class="btn btn-secondary" style="display: none; padding: 0.5rem 1rem; font-size: 0.85rem; background: var(--accent-blue); color: white; border: none;">
+                        <i data-lucide="download"></i> 앱 설치 (Install)
+                    </button>
+                    <div class="hansol-logo">
+                        <div class="logo-squares">
+                            <div class="sq-blue"></div>
+                            <div class="sq-green"></div>
+                        </div>
+                        <div class="company-logo-text">Hansol</div>
+                    </div>
+                </div>
+            </header>
+
+            <!-- View: Dashboard -->
+            <div id="view-dashboard" class="view-section active">
+                <div class="dashboard-grid">
+                    <!-- Left Column: Inputs -->
+                    <div class="col-inputs">
+
+
+                        <!-- Data Entry Card -->
+                        <div class="glass-card fade-in" style="animation-delay: 0.1s;">
+                            <div class="card-header">
+                                <i data-lucide="file-plus-2"></i>
+                                <h2>측정 데이터 입력 (Data Entry)</h2>
+                            </div>
+                            <form id="data-form">
+                                <div class="form-group">
+                                    <label>법인명 (Subsidiary Name)</label>
+                                    <select id="subsidiary-name" required>
+                                        <!-- Options will be populated securely from app.js -->
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>공장명 (Factory Name)</label>
+                                    <select id="factory-name" required>
+                                        <!-- Options will be populated securely from app.js -->
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>작성자 / Author (이름·사번)</label>
+                                    <select id="author-name" required>
+                                        <!-- Options will be populated securely from app.js -->
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>공정명 (Process Name)</label>
+                                    <select id="process-name" required>
+                                        <!-- Options will be populated securely from app.js -->
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>측정 일시 (Date & Time)</label>
+                                    <input type="datetime-local" id="measure-time" required>
+                                </div>
+                                <!-- 카메라 촬영 버튼 추가 -->
+                                <div class="form-group" id="camera-btn-container" style="margin-bottom: 1rem; display: none;">
+                                    <button type="button" id="btn-camera" class="btn btn-secondary w-full" style="display:flex; align-items:center; justify-content:center; gap:0.5rem; background:#3b82f6; color:white; border:none;">
+                                        <i data-lucide="camera"></i> 카메라로 온습도계 스캔 (Scan Meter)
+                                    </button>
+                                    <input type="file" id="camera-input" accept="image/*" capture="environment" style="display:none;">
+                                </div>
+                                <div class="form-row split">
+                                    <div class="form-group">
+                                        <label>온도 (Temp) °C</label>
+                                        <input type="number" step="0.1" id="measure-temp" placeholder="24.5" required>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>습도 (Humid) %</label>
+                                        <input type="number" step="0.1" id="measure-hum" placeholder="45.0" required>
+                                    </div>
+                                </div>
+                                <button type="submit" class="btn btn-primary w-full">데이터 저장 및 판정 (Save & Evaluate)</button>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- Right Column: Chart and Table -->
+                    <div class="col-views">
+                        <!-- Chart Card -->
+                        <div class="glass-card chart-card fade-in" style="animation-delay: 0.2s;">
+                            <div class="card-header">
+                                <i data-lucide="trending-up"></i>
+                                <h2>최근 온습도 트렌드 (Recent Trend)</h2>
+                            </div>
+                            <div class="chart-container">
+                                <canvas id="trendChart"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Data Table Card -->
+                        <div class="glass-card table-card fade-in" style="animation-delay: 0.3s;">
+                            <div class="card-header row-between">
+                                <div class="row-left">
+                                    <i data-lucide="list"></i>
+                                    <h2>최근 측정 이력 (Recent History)</h2>
+                                </div>
+                            </div>
+                            <div class="table-wrapper" style="max-height: 250px;">
+                                <table class="data-table">
+                                    <thead>
+                                        <tr>
+                                            <th>측정 일시 (Time)</th>
+                                            <th>법인명 (Subsidiary)</th>
+                                            <th>공장명 (Factory)</th>
+                                            <th>공정명 (Process)</th>
+                                            <th>작성자 (Author)</th>
+                                            <th>온도 (Temp)</th>
+                                            <th>습도 (Humid)</th>
+                                            <th>판정 (Status)</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="table-body-dashboard">
+                                        <!-- Rows mapped here -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- View: Monitoring -->
+            <div id="view-monitoring" class="view-section hidden">
+                <div class="monitoring-grid">
+                    <!-- Chart Card -->
+                    <div class="glass-card chart-card fade-in">
+                        <div class="card-header row-between">
+                            <div class="row-left">
+                                <i data-lucide="activity"></i>
+                                <h2>월별 온습도 모니터링 (Monthly Monitoring)</h2>
+                            </div>
+                            <div class="row-right" style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; justify-content: flex-end;">
+                                <div class="filter-item" style="display: flex; align-items: center; gap: 0.35rem;">
+                                    <span style="font-size: 0.85rem; color: #94a3b8; white-space: nowrap;">법인:</span>
+                                    <select id="monitoring-subsidiary-selector" class="month-picker" title="법인 선택 (Subsidiary)" style="width: auto; min-width: 120px; margin: 0;">
+                                        <option value="">전체 법인 (All)</option>
+                                    </select>
+                                </div>
+                                <div class="filter-item" style="display: flex; align-items: center; gap: 0.35rem;">
+                                    <span style="font-size: 0.85rem; color: #94a3b8; white-space: nowrap;">공장:</span>
+                                    <select id="monitoring-factory-selector" class="month-picker" title="공장 선택 (Factory)" style="width: auto; min-width: 120px; margin: 0;">
+                                        <option value="">전체 공장 (All)</option>
+                                    </select>
+                                </div>
+                                <div class="filter-item" style="display: flex; align-items: center; gap: 0.35rem;">
+                                    <span style="font-size: 0.85rem; color: #94a3b8; white-space: nowrap;">공정:</span>
+                                    <select id="monitoring-process-selector" class="month-picker" title="공정 선택 (Process)" style="width: auto; min-width: 120px; margin: 0;">
+                                        <option value="">전체 공정 (All)</option>
+                                    </select>
+                                </div>
+                                <div class="filter-item" style="display: flex; align-items: center; gap: 0.35rem;">
+                                    <span style="font-size: 0.85rem; color: #94a3b8; white-space: nowrap;">월:</span>
+                                    <input type="month" id="month-selector" min="2026-01" class="month-picker"
+                                        title="조회 월 선택 (Select Month)" style="width: auto; margin: 0;">
+                                </div>
+                            </div>
+                        </div>
+                        <div class="chart-container" style="height: 400px;">
+                            <canvas id="monitoringChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Data Table Card -->
+                    <div class="glass-card table-card fade-in" style="animation-delay: 0.1s;">
+                        <div class="card-header row-between">
+                            <div class="row-left">
+                                <i data-lucide="database"></i>
+                                <h2>전체 데이터 이력 (Total History) : <span id="total-count">0</span></h2>
+                            </div>
+                            <div class="row-right">
+                                <button id="refresh-data" class="btn btn-icon" title="서버 데이터 가져오기 (Refresh from Server)">
+                                    <i data-lucide="refresh-cw"></i>
+                                </button>
+                                <button id="export-csv" class="btn btn-icon" title="CSV 다운로드 (Download CSV)">
+                                    <i data-lucide="download"></i>
+                                </button>
+                                <button id="clear-data" class="btn btn-danger-icon" title="데이터 초기화 (Clear All Data)">
+                                    <i data-lucide="trash-2"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="table-wrapper" style="max-height: 500px;">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>측정 일시 (Time)</th>
+                                        <th>법인명 (Subsidiary)</th>
+                                        <th>공장명 (Factory)</th>
+                                        <th>공정명 (Process)</th>
+                                        <th>작성자 (Author)</th>
+                                        <th>온도 (Temp)</th>
+                                        <th>습도 (Humid)</th>
+                                        <th>판정 (Status)</th>
+                                        <th>관리 (Manage)</th>                                   </tr>
+                                </thead>
+                                <tbody id="table-body-monitoring">
+                                    <!-- Rows mapped here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- View: Settings -->
+            <div id="view-settings" class="view-section hidden">
+                <div class="settings-grid" style="max-width: 600px; margin: 0 auto; display: flex; flex-direction: column; gap: 1.5rem;">
+                    <div class="glass-card fade-in">
+                        <div class="card-header">
+                            <i data-lucide="sliders"></i>
+                            <h2>품질 스펙 설정 (Quality Spec)</h2>
+                        </div>
+                        <p style="color: #94a3b8; margin-bottom: 1.5rem; font-size: 0.9em;">현재 설정된 스펙 값을 확인하고 수정할 수 있습니다. (Modify target spec parameters)</p>
+                        <form id="spec-form">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>온도 스펙 하한/상한 (Temp Spec) °C</label>
+                                    <div class="range-group">
+                                        <input type="number" step="0.1" id="temp-min" placeholder="Min" required>
+                                        <span class="separator">-</span>
+                                        <input type="number" step="0.1" id="temp-max" placeholder="Max" required>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>습도 스펙 하한/상한 (Humid Spec) %</label>
+                                    <div class="range-group">
+                                        <input type="number" step="0.1" id="hum-min" placeholder="Min" required>
+                                        <span class="separator">-</span>
+                                        <input type="number" step="0.1" id="hum-max" placeholder="Max" required>
+                                    </div>
+                                </div>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-full">설정 값 저장하기 (Save Settings)</button>
+                        </form>
+                    </div>
+
+                    <!-- Process Management Card -->
+                    <div class="glass-card fade-in" style="animation-delay: 0.1s;">
+                        <div class="card-header">
+                            <i data-lucide="layout-template"></i>
+                            <h2>공정명 등록 관리 (Process Management)</h2>
+                        </div>
+                        <p style="color: #94a3b8; margin-bottom: 1.5rem; font-size: 0.9em;">측정 데이터 입력 시 선택할 수 있는 공정 목록을 추가하거나 삭제합니다. (Add/Delete processes)</p>
+                        
+                        <form id="process-form" style="flex-direction: row; gap: 0.5rem; margin-bottom: 1.5rem;">
+                            <input type="text" id="new-process-name" placeholder="새 공정명 (New process name)" required style="flex: 1;">
+                            <button type="submit" class="btn btn-secondary">추가 (Add)</button>
+                        </form>
+                        
+                        <div class="table-wrapper" style="max-height: 200px;">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>등록된 공정명 (Registered Processes)</th>
+                                        <th style="width: 80px; text-align: center;">관리 (Mgmt)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="process-list-body">
+                                    <!-- process rows map here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Author Management Card -->
+                    <div class="glass-card fade-in" style="animation-delay: 0.15s;">
+                        <div class="card-header">
+                            <i data-lucide="users"></i>
+                            <h2>작성자 등록 관리 (Author Management)</h2>
+                        </div>
+                        <p style="color: #94a3b8; margin-bottom: 1.5rem; font-size: 0.9em;">측정 데이터 입력 시 선택할 수 있는 작성자 목록을 추가하거나 삭제합니다. (Add/Delete authors)</p>
+                        
+                        <form id="author-form" style="flex-direction: row; gap: 0.5rem; margin-bottom: 1.5rem;">
+                            <input type="text" id="new-author-name" placeholder="새 작성자 (New author name)" required style="flex: 1;">
+                            <button type="submit" class="btn btn-secondary">추가 (Add)</button>
+                        </form>
+                        
+                        <div class="table-wrapper" style="max-height: 200px;">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>등록된 작성자 (Registered Authors)</th>
+                                        <th style="width: 80px; text-align: center;">관리 (Mgmt)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="author-list-body">
+                                    <!-- author rows map here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Subsidiary Management Card -->
+                    <div class="glass-card fade-in" style="animation-delay: 0.16s;">
+                        <div class="card-header">
+                            <i data-lucide="building-2"></i>
+                            <h2>법인 정보 등록 관리 (Subsidiary Management)</h2>
+                        </div>
+                        <p style="color: #94a3b8; margin-bottom: 1.5rem; font-size: 0.9em;">측정 데이터 입력 시 선택할 수 있는 법인 목록을 추가하거나 삭제합니다. (Add/Delete subsidiaries)</p>
+                        
+                        <form id="subsidiary-form" style="flex-direction: row; gap: 0.5rem; margin-bottom: 1.5rem;">
+                            <input type="text" id="new-subsidiary-name" placeholder="새 법인명 (New subsidiary name)" required style="flex: 1;">
+                            <button type="submit" class="btn btn-secondary">추가 (Add)</button>
+                        </form>
+                        
+                        <div class="table-wrapper" style="max-height: 200px;">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>등록된 법인명 (Registered Subsidiaries)</th>
+                                        <th style="width: 80px; text-align: center;">관리 (Mgmt)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="subsidiary-list-body">
+                                    <!-- subsidiary rows map here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Factory Management Card -->
+                    <div class="glass-card fade-in" style="animation-delay: 0.18s;">
+                        <div class="card-header">
+                            <i data-lucide="factory"></i>
+                            <h2>공장 정보 등록 관리 (Factory Management)</h2>
+                        </div>
+                        <p style="color: #94a3b8; margin-bottom: 1.5rem; font-size: 0.9em;">측정 데이터 입력 시 선택할 수 있는 공장 목록을 추가하거나 삭제합니다. (Add/Delete factories)</p>
+                        
+                        <form id="factory-form" style="flex-direction: row; gap: 0.5rem; margin-bottom: 1.5rem;">
+                            <input type="text" id="new-factory-name" placeholder="새 공장명 (New factory name)" required style="flex: 1;">
+                            <button type="submit" class="btn btn-secondary">추가 (Add)</button>
+                        </form>
+                        
+                        <div class="table-wrapper" style="max-height: 200px;">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>등록된 공장명 (Registered Factories)</th>
+                                        <th style="width: 80px; text-align: center;">관리 (Mgmt)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="factory-list-body">
+                                    <!-- factory rows map here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- Input Method Setting Card -->
+                    <div class="glass-card fade-in" style="animation-delay: 0.2s;">
+                        <div class="card-header">
+                            <i data-lucide="smartphone"></i>
+                            <h2>입력 방식 설정 (Input Method)</h2>
+                        </div>
+                        <p style="color: #94a3b8; margin-bottom: 1.5rem; font-size: 0.9em;">온습도 스펙 측정 데이터를 입력할 방식을 선택합니다. (Select input method)</p>
+                        
+                        <div class="form-group" style="display: flex; flex-direction: column; gap: 1rem; padding: 0.5rem 0;">
+                            <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer; color: white; font-size: 1.1rem;">
+                                <input type="radio" name="input-mode" value="manual" id="mode-manual" style="width: 20px; height: 20px;"> 
+                                사람이 직접 수동 입력 (Manual Input)
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 0.75rem; cursor: pointer; color: white; font-size: 1.1rem;">
+                                <input type="radio" name="input-mode" value="camera" id="mode-camera" style="width: 20px; height: 20px;"> 
+                                온습도계 카메라 스캔 (Camera Scan)
+                            </label>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast" class="toast hidden"></div>
+
+    <script src="app.js?v=20260326-7"></script>
+    <script>
+        lucide.createIcons();
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('./sw.js?v=20260326-7')
+                    .then(reg => {
+                        console.log('ServiceWorker registered');
+                        reg.update();
+                    })
+                    .catch(err => console.log('ServiceWorker error: ', err));
+
+                navigator.serviceWorker.getRegistrations().then(regs => {
+                    regs.forEach(r => r.update());
+                });
+            });
+        }
+    </script>
+</body>
+
+</html>
