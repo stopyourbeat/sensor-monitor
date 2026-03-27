@@ -396,19 +396,36 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function buildSheetPayload(action, record) {
+        const authorName = record.authorRaw || record.author || '-';
         return {
             action,
             id: record.id,
             date: record.datetime,
+            datetime: record.datetime,
+            timestamp: record.datetime,
             subsidiaryName: record.subsidiaryName,
+            subsidiary: record.subsidiaryName,
+            company: record.subsidiaryName,
+            companyName: record.subsidiaryName,
             factoryName: record.factoryName,
+            factory: record.factoryName,
+            plantName: record.factoryName,
             processName: record.processName,
-            author: record.authorRaw || record.author || '-',
+            process: record.processName,
+            author: authorName,
+            authorName,
+            writer: authorName,
             temp: record.temp,
+            temperature: record.temp,
             hum: record.hum,
+            humidity: record.hum,
             status: record.status,
             tempSpec: `${record.specTempMin}~${record.specTempMax}`,
-            humSpec: `${record.specHumMin}~${record.specHumMax}`
+            humSpec: `${record.specHumMin}~${record.specHumMax}`,
+            specTempMin: record.specTempMin,
+            specTempMax: record.specTempMax,
+            specHumMin: record.specHumMin,
+            specHumMax: record.specHumMax
         };
     }
 
@@ -456,13 +473,6 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (corsOrNetworkError) {
             // Fallback for environments where Apps Script CORS blocks readable responses.
             try {
-                await fetch(GOOGLE_SHEETS_URL, {
-                    method: 'POST',
-                    mode: 'no-cors',
-                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify(payload)
-                });
-            } catch (fallbackError) {
                 const formBody = new URLSearchParams();
                 Object.entries(payload).forEach(([key, value]) => {
                     formBody.append(key, value === undefined || value === null ? '' : String(value));
@@ -472,6 +482,13 @@ document.addEventListener('DOMContentLoaded', () => {
                     mode: 'no-cors',
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
                     body: formBody.toString()
+                });
+            } catch (fallbackError) {
+                await fetch(GOOGLE_SHEETS_URL, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                    body: JSON.stringify(payload)
                 });
             }
             return true;
