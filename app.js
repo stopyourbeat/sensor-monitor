@@ -114,6 +114,11 @@ document.addEventListener('DOMContentLoaded', () => {
         return text;
     }
 
+    function toCsvCell(value) {
+        const text = value === null || value === undefined ? '' : String(value);
+        return `"${text.replace(/"/g, '""')}"`;
+    }
+
     function getFirstValue(obj, keys, fallback = '') {
         for (const key of keys) {
             if (Object.prototype.hasOwnProperty.call(obj, key)) {
@@ -357,7 +362,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    async function fetchServerData() {
+    async function fetchServerDataBootstrapLegacy() {
         if (!GOOGLE_SHEETS_URL) return;
         try {
             showToast('서버(구글시트) 연동 중... (Syncing...)');
@@ -495,7 +500,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    async function flushSyncQueue({ silent = true } = {}) {
+    async function flushSyncQueueLegacy({ silent = true } = {}) {
         if (!GOOGLE_SHEETS_URL || syncInProgress || syncQueue.length === 0) return;
         if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
 
@@ -564,7 +569,7 @@ document.addEventListener('DOMContentLoaded', () => {
         persistProcessData();
     }
 
-    async function fetchServerData({ silent = false } = {}) {
+    async function fetchServerDataLegacy({ silent = false } = {}) {
         if (!GOOGLE_SHEETS_URL) return;
         if (!silent) showToast('서버 데이터 동기화 중... (Syncing...)');
 
@@ -597,7 +602,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     }
 
-    async function runSync({ silent = true } = {}) {
+    async function runSyncLegacy({ silent = true } = {}) {
         await flushSyncQueue({ silent: true });
         await fetchServerData({ silent });
         await flushSyncQueue({ silent: true });
@@ -1001,7 +1006,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 measureHumInput.value = '';
                 updateUI();
                 return;
-                if (false) {
+                /* Legacy sync block removed
 
                     // 2. 구글 시트로 전송 로직 (호환성 보강)
                     if (GOOGLE_SHEETS_URL) {
@@ -1041,7 +1046,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     measureTempInput.value = '';
                     measureHumInput.value = '';
                     updateUI();
-                }
+                */
             });
         }
 
@@ -1085,17 +1090,30 @@ document.addEventListener('DOMContentLoaded', () => {
                     return;
                 }
 
-                let csvContent = "data:text/csv;charset=utf-8,\uFEFF";
+                let csvContent = "\uFEFF";
+                csvContent = "\uFEFF측정일시(Time),법인명(Subsidiary),공장명(Factory),공정명(Process Name),작성자(Author),온도/Temp(°C),온도스펙/TempSpec(Min-Max),습도/Hum(%),습도스펙/HumSpec(Min-Max),판정결과(Status)\n";
                 csvContent += "측정일시(Time),법인명(Subsidiary),공장명(Factory),공정명(Process Name),작성자(Author),온도/Temp(°C),온도스펙/TempSpec(Min-Max),습도/Hum(%),습도스펙/HumSpec(Min-Max),판정결과(Status)\n";
 
+                csvContent = "\uFEFF측정일시(Time),법인명(Subsidiary),공장명(Factory),공정명(Process Name),작성자(Author),온도/Temp(°C),온도스펙/TempSpec(Min-Max),습도/Hum(%),습도스펙/HumSpec(Min-Max),판정결과(Status)\n";
                 processData.forEach(item => {
                     const tempSpecText = formatSpecRange(item.specTempMin, item.specTempMax);
                     const humSpecText = formatSpecRange(item.specHumMin, item.specHumMax);
-                    // CSV row encoding
-                    csvContent += `${item.datetime},${item.subsidiaryName || '-'},${item.factoryName || '-'},${item.processName},${item.author || '-'},${item.temp},${tempSpecText},${item.hum},${humSpecText},${item.status}\n`;
+                    const row = [
+                        item.datetime,
+                        item.subsidiaryName || '-',
+                        item.factoryName || '-',
+                        item.processName,
+                        item.author || '-',
+                        item.temp,
+                        tempSpecText,
+                        item.hum,
+                        humSpecText,
+                        item.status
+                    ].map(toCsvCell).join(',');
+                    csvContent += `${row}\n`;
                 });
 
-                const encodedUri = encodeURI(csvContent);
+                const encodedUri = `data:text/csv;charset=utf-8,${encodeURIComponent(csvContent)}`;
                 const link = document.createElement("a");
                 link.setAttribute("href", encodedUri);
                 link.setAttribute("download", `SpecData_${new Date().toISOString().slice(0, 10)}.csv`);

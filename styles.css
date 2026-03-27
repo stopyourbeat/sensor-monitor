@@ -306,6 +306,10 @@ input, select {
     transition: var(--transition-fast);
 }
 
+input[type="radio"] {
+    accent-color: var(--accent-blue);
+}
+
 select option {
     background-color: var(--bg-secondary);
     color: var(--text-primary);
